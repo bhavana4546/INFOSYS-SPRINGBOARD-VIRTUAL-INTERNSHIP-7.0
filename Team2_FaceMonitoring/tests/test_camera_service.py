@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import Mock, patch
 
 import numpy as np
 
@@ -50,6 +51,42 @@ class CameraServiceTests(unittest.TestCase):
                 "face_detected",
             ],
         )
+
+    @patch("services.camera_service.cv2.VideoCapture")
+    def test_unavailable_camera_is_not_started_and_handle_is_released(self, video_capture):
+        capture = Mock()
+        capture.isOpened.return_value = False
+        video_capture.return_value = capture
+
+        self.assertFalse(self.service.start())
+        capture.release.assert_called_once_with()
+        status = self.service.get_status()
+        self.assertEqual(status["camera_status"], "offline")
+        self.assertIn("Could not open camera", status["camera_error"])
+
+    @patch("services.camera_service.cv2.VideoCapture")
+    def test_identifiable_camera_permission_exception(self, video_capture):
+        video_capture.side_effect = PermissionError("access denied")
+
+        self.assertFalse(self.service.start())
+        status = self.service.get_status()
+        self.assertIn("camera access was denied", status["camera_error"].lower())
+
+    @patch("services.camera_service.cv2.VideoCapture")
+    def test_disconnected_camera_releases_capture_and_reports_failure(self, video_capture):
+        capture = Mock()
+        capture.isOpened.return_value = True
+        capture.read.return_value = (False, None)
+        video_capture.return_value = capture
+
+        self.assertTrue(self.service.start())
+        self.service._thread.join(timeout=2)
+        self.assertFalse(self.service._thread.is_alive())
+        capture.release.assert_called_once_with()
+        self.assertEqual(self.service.get_status()["camera_status"], "offline")
+        event_types = [event["type"] for event in self.events.get_recent_events()]
+        self.assertIn("camera_unavailable", event_types)
+        self.assertIn("frame_capture_failure", event_types)
 
 
 if __name__ == "__main__":

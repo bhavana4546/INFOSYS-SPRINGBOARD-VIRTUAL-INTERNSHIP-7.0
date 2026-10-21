@@ -1,15 +1,15 @@
-"""Background webcam capture, frame processing, and MJPEG streaming."""
+"""Webcam capture, frame processing, and MJPEG streaming for one session."""
 
 from __future__ import annotations
 
 import time
-from threading import Event, Lock, Thread, current_thread
+from threading import Event, RLock, Thread, current_thread
 from typing import Any
 
 import cv2
 import numpy as np
 
-from config import CAMERA_RETRY_SECONDS, JPEG_QUALITY
+from config import JPEG_QUALITY
 from services.event_logger import EventLogger
 from services.face_detector import FaceDetector
 
@@ -20,7 +20,7 @@ except ImportError:
 
 
 class CameraService:
-    """Own one camera-capture thread and expose its latest processed frame."""
+    """Own one initialized camera and its frame-processing thread."""
 
     available_modes = ("normal", "grayscale", "blur", "threshold", "canny")
 
@@ -37,45 +37,69 @@ class CameraService:
         self.frame_height = frame_height
         self.detector = detector
         self.event_logger = event_logger
-        self._lock = Lock()
+        self._lock = RLock()
         self._stop_event = Event()
-        self._restart_event = Event()
         self._thread: Thread | None = None
+        self._capture = None
         self._frame_jpeg: bytes | None = None
         self._mode = "normal"
-        self._camera_status = "starting"
+        self._camera_status = "offline"
         self._camera_error: str | None = None
         self._face_count = 0
         self._fps = 0.0
         self._latency_ms = 0.0
         self._last_frame_at: float | None = None
         self._last_face_state = "none"
-        self._last_capture_failure_logged = False
 
-    def start(self) -> None:
-        """Start the worker once; this method is safe to call repeatedly."""
+    def start(self) -> bool:
+        """Initialize the webcam synchronously, then launch frame processing."""
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
-                return
+                return self._camera_status == "online"
+            capture = self._open_camera()
+            if capture is None:
+                return False
             self._stop_event.clear()
+            self._capture = capture
+            self._camera_status = "online"
+            self._camera_error = None
             self._thread = Thread(
                 target=self._capture_loop,
+                args=(capture,),
                 name="face-monitor-camera",
                 daemon=True,
             )
-            self._thread.start()
+            try:
+                self._thread.start()
+            except Exception as exc:
+                self._release_camera(capture)
+                self._capture = None
+                self._camera_status = "offline"
+                self._camera_error = f"Could not start camera processing: {exc}"
+                raise
+        self.event_logger.add_event("camera_connected", "Camera connected.")
+        return True
 
     def stop(self) -> None:
-        """Stop the worker and wait for the camera handle to be released."""
+        """Stop frame processing and wait for the worker to release the webcam."""
         self._stop_event.set()
-        self._restart_event.set()
         thread = self._thread
         if thread is not None and thread.is_alive() and thread is not current_thread():
             thread.join(timeout=5)
+            if thread.is_alive():
+                raise RuntimeError("Camera processing did not stop within five seconds.")
+        if thread is None or not thread.is_alive():
+            capture = self._capture
+            if capture is not None:
+                self._release_camera(capture)
+                with self._lock:
+                    self._capture = None
+                    if self._camera_error is None:
+                        self._camera_status = "offline"
 
     def request_restart(self) -> None:
-        """Request a safe camera reopen by the owning worker thread."""
-        self._restart_event.set()
+        """Restart is performed by MonitoringService for a specific session."""
+        self.stop()
 
     def set_processing_mode(self, mode: str) -> None:
         if mode not in self.available_modes:
@@ -112,78 +136,90 @@ class CameraService:
             }
 
     def stream_frames(self):
-        """Yield the latest JPEG repeatedly for Flask's MJPEG response."""
+        """Yield processed frames while this session's camera worker is active."""
         while not self._stop_event.is_set():
             with self._lock:
                 frame = self._frame_jpeg
-            if frame is None:
-                frame = self._offline_frame()
-            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+            if frame is not None:
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
             time.sleep(0.05)
 
-    def _capture_loop(self) -> None:
-        capture = None
-        while not self._stop_event.is_set():
-            if self._restart_event.is_set():
-                self._restart_event.clear()
-                if capture is not None:
-                    capture.release()
-                    capture = None
-                self._set_camera_status("restarting", None)
-
-            if capture is None:
-                capture = self._open_camera()
-                if capture is None:
-                    self._stop_event.wait(CAMERA_RETRY_SECONDS)
-                    continue
-                self._set_camera_status("online", None)
-                self._last_capture_failure_logged = False
-
-            ok, frame = capture.read()
-            if not ok or frame is None:
-                self._handle_capture_failure()
-                capture.release()
-                capture = None
-                self._stop_event.wait(CAMERA_RETRY_SECONDS)
-                continue
-
-            try:
-                self._process_frame(frame)
-            except (cv2.error, RuntimeError) as exc:
-                self._set_camera_status("offline", f"Frame processing failed: {exc}")
-                if not self._last_capture_failure_logged:
+    def _capture_loop(self, capture) -> None:
+        try:
+            while not self._stop_event.is_set():
+                ok, frame = capture.read()
+                if not ok or frame is None:
+                    self._set_camera_error("Camera frame capture failed.")
                     self.event_logger.add_event(
                         "frame_capture_failure",
-                        "A captured frame could not be processed.",
+                        "The camera stopped returning frames.",
                     )
-                    self._last_capture_failure_logged = True
-                capture.release()
-                capture = None
-                self._stop_event.wait(CAMERA_RETRY_SECONDS)
-
-        if capture is not None:
-            capture.release()
-        self._set_camera_status("offline", None)
+                    break
+                self._process_frame(frame)
+        except Exception as exc:
+            self._set_camera_error(f"Camera frame processing failed: {exc}")
+            self.event_logger.add_event(
+                "frame_capture_failure",
+                "Camera frame processing failed; monitoring has stopped.",
+            )
+        finally:
+            try:
+                self._release_camera(capture)
+            finally:
+                with self._lock:
+                    self._capture = None
+                    self._face_count = 0
+                    self._fps = 0.0
+                    self._latency_ms = 0.0
+                    self._frame_jpeg = None
+                    if self._camera_error is None:
+                        self._camera_status = "offline"
 
     def _open_camera(self):
+        capture = None
         try:
             capture = cv2.VideoCapture(self.camera_index)
+            if not capture.isOpened():
+                self._release_camera(capture)
+                self._set_camera_error(
+                    f"Could not open camera index {self.camera_index}. Check that the "
+                    "webcam is connected and not in use by another application. OpenCV "
+                    "cannot reliably distinguish permission denial from unavailability."
+                )
+                return None
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
+            return capture
+        except PermissionError as exc:
+            if capture is not None:
+                self._release_camera(capture)
+            self._set_camera_error(
+                "Python/OpenCV camera access was denied. Allow camera access for "
+                "desktop apps, the terminal, or Python in operating-system privacy "
+                "settings; browser-site camera permission does not grant backend "
+                f"access. Details: {exc}"
+            )
+            return None
         except cv2.error as exc:
-            self._set_camera_status(
-                "offline",
-                f"Could not initialize camera index {self.camera_index}: {exc}",
+            if capture is not None:
+                self._release_camera(capture)
+            self._set_camera_error(
+                f"Could not initialize camera index {self.camera_index}: {exc}"
             )
             return None
-        if not capture.isOpened():
+        except Exception:
+            if capture is not None:
+                self._release_camera(capture)
+            raise
+
+    def _release_camera(self, capture) -> None:
+        try:
             capture.release()
-            self._set_camera_status(
-                "offline",
-                f"Could not open camera index {self.camera_index}. Check camera permissions and connection.",
+        except Exception as exc:
+            self.event_logger.add_event(
+                "camera_release_failure",
+                f"Could not release the camera cleanly: {exc}",
             )
-            return None
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.frame_width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.frame_height)
-        return capture
 
     def _process_frame(self, frame) -> None:
         started_at = time.perf_counter()
@@ -193,7 +229,6 @@ class CameraService:
         displayed = self._apply_mode(frame, mode)
         if mode == "normal":
             displayed = self.detector.draw_faces(displayed, faces)
-
         encoded, buffer = cv2.imencode(
             ".jpg",
             displayed,
@@ -249,51 +284,13 @@ class CameraService:
                 "multiple_faces_detected",
                 f"Multiple faces detected ({count}).",
             )
-        elif state == "one" and previous == "none":
-            self.event_logger.add_event("face_detected", "A face was detected.")
-        elif state == "one" and previous == "multiple":
-            self.event_logger.add_event(
-                "face_detected",
-                "One face remains visible.",
-            )
+        elif state == "one":
+            message = "A face was detected." if previous == "none" else "One face remains visible."
+            self.event_logger.add_event("face_detected", message)
         self._last_face_state = state
 
-    def _handle_capture_failure(self) -> None:
-        self._set_camera_status("offline", "Camera frame capture failed.")
-        if not self._last_capture_failure_logged:
-            self.event_logger.add_event(
-                "frame_capture_failure",
-                "The camera stopped returning frames.",
-            )
-            self._last_capture_failure_logged = True
-
-    def _set_camera_status(self, status: str, error: str | None) -> None:
+    def _set_camera_error(self, message: str) -> None:
         with self._lock:
-            previous = self._camera_status
-            self._camera_status = status
-            self._camera_error = error
-        if status == "online" and previous != "online":
-            self.event_logger.add_event("camera_connected", "Camera connected.")
-        elif status == "offline" and previous != "offline":
-            self.event_logger.add_event(
-                "camera_unavailable",
-                error or "Camera unavailable.",
-            )
-
-    @staticmethod
-    def _offline_frame() -> bytes:
-        image = np.zeros((360, 640, 3), dtype="uint8")
-        cv2.putText(
-            image,
-            "Camera unavailable",
-            (150, 175),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.9,
-            (185, 190, 200),
-            2,
-            cv2.LINE_AA,
-        )
-        ok, encoded = cv2.imencode(".jpg", image)
-        if not ok:
-            raise RuntimeError("Could not encode the offline camera placeholder.")
-        return encoded.tobytes()
+            self._camera_status = "offline"
+            self._camera_error = message
+        self.event_logger.add_event("camera_unavailable", message)

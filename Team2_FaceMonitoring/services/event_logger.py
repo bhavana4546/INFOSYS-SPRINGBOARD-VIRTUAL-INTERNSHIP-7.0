@@ -11,11 +11,16 @@ from config import MAX_RECENT_EVENTS
 class EventLogger:
     """Keep the newest events in memory without writing camera data to disk."""
 
-    def __init__(self, max_events: int = MAX_RECENT_EVENTS) -> None:
+    def __init__(
+        self,
+        max_events: int = MAX_RECENT_EVENTS,
+        session_id: str | None = None,
+    ) -> None:
         if max_events < 1:
             raise ValueError("max_events must be greater than zero")
         self._events: deque[dict[str, Any]] = deque(maxlen=max_events)
         self._lock = Lock()
+        self.session_id = session_id
 
     def add_event(self, event_type: str, message: str) -> dict[str, Any]:
         event = {
@@ -23,6 +28,8 @@ class EventLogger:
             "message": message,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
+        if self.session_id is not None:
+            event["session_id"] = self.session_id
         with self._lock:
             self._events.appendleft(event)
         return event

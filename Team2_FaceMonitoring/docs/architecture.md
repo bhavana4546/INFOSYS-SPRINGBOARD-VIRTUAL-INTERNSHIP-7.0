@@ -2,23 +2,24 @@
 
 ## Frame and metrics pipeline
 
-**Webcam → Frame acquisition → Preprocessing → Face detection → Bounding boxes → Metrics → Dashboard**
+**Exam session → Webcam ownership → Frame acquisition → Preprocessing → Face detection → Metrics & events → Dashboard**
 
-1. **Webcam:** OpenCV opens the configured camera index on the local machine.
-2. **Frame acquisition:** `CameraService` captures frames on a dedicated background thread so Flask can continue responding to dashboard and API requests.
-3. **Preprocessing:** Frames are converted to grayscale and blurred for the Haar Cascade detector. A separately selected display mode can show normal color, grayscale, Gaussian blur, binary thresholding, or Canny edges.
-4. **Face detection:** The bundled OpenCV frontal-face Haar Cascade finds face-like regions. It detects regions only; it does not identify people.
-5. **Bounding boxes:** In normal video mode, detected regions are drawn as generic green boxes labelled “Face”. Other display modes show their chosen image transform; detection and face counts still run on the original camera frame.
+1. **Session:** `MonitoringService` validates session IDs and stores each session's state, camera metrics, and event history separately.
+2. **Webcam:** One `MonitoringService` lock grants the configured camera to at most one session. `CameraService.start()` opens the camera synchronously; the session becomes `RUNNING` only after `isOpened()` succeeds.
+3. **Frame acquisition:** `CameraService` captures frames on a dedicated background thread so Flask can continue responding to dashboard and API requests.
+4. **Preprocessing:** Frames are converted to grayscale and blurred for the Haar Cascade detector. Display mode can show normal color, grayscale, Gaussian blur, binary thresholding, or Canny edges.
+5. **Face detection:** The bundled OpenCV frontal-face Haar Cascade finds face-like regions; it does not identify people.
 6. **Metrics:** The service updates face count, smoothed frame rate, frame-processing latency, and camera status. CPU and memory values are reported if `psutil` is available.
-7. **Dashboard:** Flask serves the page, MJPEG stream, status JSON, and controls. Browser JavaScript polls status and creates event-log elements using safe DOM text nodes.
+7. **Dashboard:** Flask serves a session-specific MJPEG stream, status JSON, and controls. Browser JavaScript polls the selected session and renders event messages with safe DOM text nodes.
 
 ## Module responsibilities
 
-- `app.py` creates the Flask app and routes. The `__main__` section starts and stops the camera without Flask's debug reloader.
+- `app.py` creates the Flask app and API routes. Camera access begins only after a valid session start request.
 - `config.py` holds camera and detector settings, with camera/detection overrides available through environment variables.
-- `services/camera_service.py` owns camera capture, the worker thread, processing modes, metrics, restart requests, and the MJPEG stream.
+- `services/monitoring_service.py` validates IDs, maintains the session lifecycle, prevents concurrent camera ownership, and scopes events/status/metrics.
+- `services/camera_service.py` synchronously initializes one camera, owns its worker thread, processing modes, metrics, safe release, and MJPEG stream.
 - `services/face_detector.py` loads OpenCV's bundled Haar Cascade and performs face detection and generic box drawing.
-- `services/event_logger.py` stores up to 100 recent, timestamped events in a lock-protected in-memory queue.
+- `services/event_logger.py` stores up to 100 recent, timestamped, session-tagged events in a lock-protected in-memory queue.
 - `templates/index.html` defines dashboard structure and educational project information.
 - `static/css/style.css` contains the responsive dark dashboard styling without external assets.
-- `static/js/dashboard.js` refreshes status, safely renders event messages, and calls the settings and action APIs.
+- `static/js/dashboard.js` refreshes the selected session's status, safely renders event messages, and calls the session controls and settings APIs.

@@ -19,7 +19,7 @@ body {
   font-family: "Segoe UI", Arial, sans-serif;
   line-height: 1.5;
 }
-button, select { font: inherit; }
+button, select, input { font: inherit; }
 .topbar {
   min-height: 92px;
   display: flex;
@@ -65,6 +65,20 @@ h2 { margin-bottom: 0; font-size: 1.1rem; letter-spacing: -.01em; }
 .side-column { display: grid; gap: 18px; }
 .card { border: 1px solid var(--line); border-radius: 15px; background: linear-gradient(155deg, rgba(23, 39, 59, .97), rgba(15, 27, 43, .98)); box-shadow: 0 12px 30px #030a1370; }
 .preview-card { padding: 20px; }
+.session-controls { margin-bottom: 22px; padding: 15px; border: 1px solid #2b4057; border-radius: 10px; background: #101d2e; }
+.session-heading { margin-bottom: 12px; }
+.session-controls > label { display: block; margin-bottom: 6px; color: var(--muted); font-size: .82rem; }
+.session-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.session-actions input { flex: 1 1 180px; min-width: 160px; min-height: 39px; padding: 8px 11px; border: 1px solid #354c66; border-radius: 8px; color: var(--text); background: #0c1726; }
+.session-actions input:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+.session-help { margin: 6px 0 0; font-size: .75rem; }
+.session-summary { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 12px 0 0; }
+.session-summary div { display: flex; align-items: center; gap: 8px; }
+.session-summary dt { color: var(--muted); font-size: .8rem; }
+.session-summary dd { margin: 0; overflow-wrap: anywhere; font-size: .82rem; font-weight: 650; }
+.state-badge { padding: 3px 8px; border: 1px solid #405168; border-radius: 999px; color: #c5d2e1; background: #1a2a3c; font-size: .7rem !important; }
+.state-badge.running { border-color: #328563; color: var(--green); background: #123326; }
+.state-badge.failed { border-color: #8a4650; color: #ff9ba4; background: #351d25; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 15px; }
 .preview-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; }
 select, .button { min-height: 39px; padding: 8px 12px; border: 1px solid #354c66; border-radius: 8px; color: var(--text); background: #14243a; }

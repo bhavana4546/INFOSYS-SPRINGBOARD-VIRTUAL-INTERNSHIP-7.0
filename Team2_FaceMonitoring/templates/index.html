@@ -24,6 +24,27 @@
   <main class="page">
     <section class="dashboard-grid" aria-label="Live camera dashboard">
       <article class="card preview-card">
+        <div class="session-controls">
+          <div class="session-heading">
+            <p class="eyebrow">EXAM SESSION</p>
+            <h2>Session-based monitoring</h2>
+          </div>
+          <label for="session-id">Exam session ID</label>
+          <div class="session-actions">
+            <input id="session-id" name="session_id" type="text" maxlength="64"
+                   placeholder="e.g. exam-2026-001" autocomplete="off"
+                   aria-describedby="session-help">
+            <button id="start-monitoring" class="button button-primary" type="button">Start Monitoring</button>
+            <button id="stop-monitoring" class="button button-secondary" type="button" disabled>Stop Monitoring</button>
+            <button id="retry-camera" class="button button-secondary" type="button" disabled>Retry Camera</button>
+          </div>
+          <p id="session-help" class="muted session-help">Use letters, numbers, period, underscore, or hyphen (1–64 characters).</p>
+          <p id="session-feedback" class="action-message" role="status" aria-live="polite"></p>
+          <dl class="session-summary">
+            <div><dt>Current session</dt><dd id="current-session">None</dd></div>
+            <div><dt>Monitoring status</dt><dd id="monitoring-status" class="state-badge">NOT_STARTED</dd></div>
+          </dl>
+        </div>
         <div class="section-heading">
           <div>
             <p class="eyebrow">LIVE MONITOR</p>
@@ -38,11 +59,10 @@
               <option value="threshold">Binary threshold</option>
               <option value="canny">Canny edges</option>
             </select>
-            <button id="restart-camera" class="button button-secondary" type="button">Restart camera</button>
           </div>
         </div>
         <div class="video-frame">
-          <img id="video-feed" src="/video_feed" alt="Live camera stream. Face detection draws generic boxes and does not identify people.">
+          <img id="video-feed" alt="Live camera stream. Face detection draws generic boxes and does not identify people.">
           <span class="live-label"><span class="live-dot"></span> LIVE</span>
         </div>
         <p id="camera-error" class="inline-error" role="status"></p>
@@ -74,7 +94,7 @@
             <span id="event-total" class="count-badge">0</span>
           </div>
           <ol id="event-list" class="event-list" aria-live="polite">
-            <li class="empty-state">Waiting for camera events…</li>
+            <li class="empty-state">Enter an exam session ID to view its events.</li>
           </ol>
         </article>
       </aside>
@@ -94,8 +114,8 @@
       <article class="card info-card">
         <p class="eyebrow">EVENTS</p>
         <h2>Event specification</h2>
-        <p class="muted">The event log records camera connection and capture state changes, face appearance or disappearance, multiple faces, processing-mode changes, and test events. Repeated unchanged frames do not create duplicate events.</p>
-        <p class="muted">The newest 100 events are kept in memory and are cleared when the application restarts.</p>
+        <p class="muted">The event log records camera connection and capture state changes, face appearance or disappearance, multiple faces, processing-mode changes, and test events. Every event belongs to one session; unchanged frames do not create duplicate events.</p>
+        <p class="muted">The newest 100 events per session are kept in memory and are cleared when the application restarts.</p>
       </article>
       <article class="card info-card privacy-card">
         <p class="eyebrow">PRIVACY &amp; LIMITATIONS</p>
@@ -104,7 +124,7 @@
         <p class="muted">Lighting, camera angle, occlusion, resolution, and processing load can affect detection and frame rate. Results may include false detections or missed faces.</p>
       </article>
     </section>
-    <footer>Team 2 · OpenCV &amp; Face Monitoring · Local camera frames stay on this device</footer>
+    <footer>Team 2 · OpenCV &amp; Face Monitoring · One physical webcam supports one active session; local camera frames stay on this device</footer>
   </main>
 </body>
 </html>
