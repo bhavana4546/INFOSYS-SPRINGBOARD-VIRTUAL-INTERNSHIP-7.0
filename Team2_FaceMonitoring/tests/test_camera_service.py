@@ -52,6 +52,75 @@ class CameraServiceTests(unittest.TestCase):
             ],
         )
 
+    def test_frame_sampling_obeys_configured_target_fps(self):
+        service = CameraService(
+            camera_index=0,
+            frame_width=640,
+            frame_height=480,
+            detector=object(),
+            event_logger=self.events,
+            target_fps=2,
+        )
+
+        self.assertTrue(service._frame_is_due(10.0))
+        self.assertFalse(service._frame_is_due(10.25))
+        self.assertTrue(service._frame_is_due(10.5))
+
+    def test_invalid_frame_marks_detection_unavailable(self):
+        with patch("services.camera_service.logger.warning"):
+            self.service._process_frame(np.array([], dtype=np.uint8))
+
+        status = self.service.get_status()
+        self.assertEqual(status["face_state"], "DETECTION_UNAVAILABLE")
+        self.assertIsNone(status["face_count"])
+
+    def test_prolonged_absence_event_is_emitted_once_per_absence(self):
+        frame = np.zeros((48, 48, 3), dtype=np.uint8)
+        detector = Mock(detect=Mock(return_value=[]))
+        detector.draw_faces.side_effect = lambda image, _faces: image
+        service = CameraService(
+            camera_index=0,
+            frame_width=640,
+            frame_height=480,
+            detector=detector,
+            event_logger=self.events,
+            absence_threshold_seconds=2,
+        )
+
+        with patch(
+            "services.camera_service.time.monotonic",
+            side_effect=(10.0, 11.0, 12.0, 13.0, 14.0),
+        ):
+            for _ in range(4):
+                service._process_frame(frame)
+
+        prolonged = [
+            event
+            for event in self.events.get_recent_events()
+            if event["type"] == "prolonged_absence"
+        ]
+        self.assertEqual(len(prolonged), 1)
+        self.assertEqual(service.get_status()["face_state"], "FACE_ABSENT")
+
+    def test_detection_exception_is_unavailable_not_absence(self):
+        service = CameraService(
+            camera_index=0,
+            frame_width=640,
+            frame_height=480,
+            detector=Mock(detect=Mock(side_effect=RuntimeError("detector failed"))),
+            event_logger=self.events,
+        )
+
+        with (
+            patch("services.camera_service.time.monotonic", return_value=10.0),
+            patch("services.camera_service.logger.exception"),
+        ):
+            service._process_frame(np.zeros((48, 48, 3), dtype=np.uint8))
+
+        status = service.get_status()
+        self.assertEqual(status["face_state"], "DETECTION_UNAVAILABLE")
+        self.assertIsNone(status["face_count"])
+
     @patch("services.camera_service.cv2.VideoCapture")
     def test_unavailable_camera_is_not_started_and_handle_is_released(self, video_capture):
         capture = Mock()
@@ -71,6 +140,17 @@ class CameraServiceTests(unittest.TestCase):
         self.assertFalse(self.service.start())
         status = self.service.get_status()
         self.assertIn("camera access was denied", status["camera_error"].lower())
+
+    @patch("services.camera_service.cv2.VideoCapture")
+    def test_video_path_is_used_as_capture_source(self, video_capture):
+        capture = Mock()
+        capture.isOpened.return_value = True
+        video_capture.return_value = capture
+        self.service.source = "sample.mp4"
+
+        self.assertIs(self.service._open_camera(), capture)
+        video_capture.assert_called_once_with("sample.mp4")
+        capture.set.assert_not_called()
 
     @patch("services.camera_service.cv2.VideoCapture")
     def test_disconnected_camera_releases_capture_and_reports_failure(self, video_capture):

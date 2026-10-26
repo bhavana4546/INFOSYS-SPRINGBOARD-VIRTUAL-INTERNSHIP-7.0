@@ -7,6 +7,7 @@ import logging
 from threading import RLock
 from typing import Any, Callable
 
+from config import ABSENCE_THRESHOLD_SECONDS, TARGET_FPS
 from services.camera_service import CameraService
 from services.event_logger import EventLogger
 from services.face_detector import FaceDetector
@@ -14,7 +15,11 @@ from services.face_detector import FaceDetector
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 logger = logging.getLogger(__name__)
 INITIAL_METRICS = {
-    "face_count": 0,
+    "face_count": None,
+    "face_state": "DETECTION_UNAVAILABLE",
+    "absence_duration_seconds": 0.0,
+    "absence_threshold_seconds": ABSENCE_THRESHOLD_SECONDS,
+    "target_fps": TARGET_FPS,
     "fps": 0.0,
     "latency_ms": 0.0,
     "processing_mode": "normal",
@@ -60,7 +65,14 @@ class MonitoringService:
 
     @staticmethod
     def _create_camera(event_logger: EventLogger) -> CameraService:
-        from config import CAMERA_INDEX, FRAME_HEIGHT, FRAME_WIDTH
+        from config import (
+            ABSENCE_THRESHOLD_SECONDS,
+            CAMERA_INDEX,
+            FRAME_HEIGHT,
+            FRAME_WIDTH,
+            TARGET_FPS,
+            VIDEO_PATH,
+        )
 
         return CameraService(
             camera_index=CAMERA_INDEX,
@@ -68,6 +80,9 @@ class MonitoringService:
             frame_height=FRAME_HEIGHT,
             detector=FaceDetector(),
             event_logger=event_logger,
+            source=VIDEO_PATH if VIDEO_PATH is not None else CAMERA_INDEX,
+            target_fps=TARGET_FPS,
+            absence_threshold_seconds=ABSENCE_THRESHOLD_SECONDS,
         )
 
     @staticmethod

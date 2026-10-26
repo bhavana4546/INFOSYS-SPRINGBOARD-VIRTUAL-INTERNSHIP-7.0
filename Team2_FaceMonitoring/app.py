@@ -9,6 +9,7 @@ from typing import Any
 import cv2
 from flask import Flask, Response, jsonify, render_template, request
 
+from config import ABSENCE_THRESHOLD_SECONDS, TARGET_FPS
 from services.camera_service import CameraService
 from services.monitoring_service import MonitoringError, MonitoringService
 
@@ -123,7 +124,11 @@ def create_app(
                         "status": "NOT_STARTED",
                         "message": "No monitoring session is active.",
                         "error": None,
-                        "face_count": 0,
+                        "face_count": None,
+                        "face_state": "DETECTION_UNAVAILABLE",
+                        "absence_duration_seconds": 0.0,
+                        "absence_threshold_seconds": ABSENCE_THRESHOLD_SECONDS,
+                        "target_fps": TARGET_FPS,
                         "fps": 0,
                         "latency_ms": 0,
                         "processing_mode": "normal",

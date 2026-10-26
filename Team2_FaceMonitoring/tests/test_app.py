@@ -77,6 +77,8 @@ class DashboardApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["session_id"], "exam-1")
         self.assertEqual(payload["status"], "NOT_STARTED")
+        self.assertEqual(payload["face_state"], "DETECTION_UNAVAILABLE")
+        self.assertIsNone(payload["face_count"])
         self.assertEqual(payload["events"], [])
         self.assertIn("opencv_version", payload)
 

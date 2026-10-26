@@ -82,6 +82,8 @@
       statusDot.classList.add("offline");
       cameraError.textContent = "";
       document.getElementById("face-count").textContent = "—";
+      document.getElementById("face-state").textContent = "DETECTION UNAVAILABLE";
+      document.getElementById("absence-duration").textContent = "—";
       document.getElementById("fps").textContent = "—";
       document.getElementById("latency").textContent = "—";
       renderEvents([]);
@@ -120,7 +122,14 @@
       statusDot.classList.toggle("online", data.status === "RUNNING");
       statusDot.classList.toggle("offline", data.status !== "RUNNING");
       cameraError.textContent = data.error || "";
-      document.getElementById("face-count").textContent = String(data.face_count ?? 0);
+      document.getElementById("face-count").textContent =
+        data.face_count == null ? "—" : String(data.face_count);
+      document.getElementById("face-state").textContent =
+        (data.face_state || "DETECTION_UNAVAILABLE").replaceAll("_", " ");
+      document.getElementById("absence-duration").textContent =
+        data.face_state === "FACE_ABSENT"
+          ? `${Number(data.absence_duration_seconds || 0).toFixed(1)} s`
+          : "—";
       document.getElementById("fps").textContent = Number(data.fps || 0).toFixed(1);
       document.getElementById("latency").textContent = `${Number(data.latency_ms || 0).toFixed(1)} ms`;
       document.getElementById("opencv-version").textContent = data.opencv_version || "—";

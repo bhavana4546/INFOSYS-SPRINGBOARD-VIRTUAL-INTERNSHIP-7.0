@@ -1,6 +1,6 @@
 # OpenCV & Face Monitoring — Team 2
 
-A Flask dashboard for session-based webcam monitoring. OpenCV captures frames and detects face-shaped regions with its bundled Haar Cascade. It does not recognize or identify people, save recordings, or send camera frames to external services.
+A Flask dashboard for session-based webcam or sample-video monitoring. OpenCV captures frames and detects face-shaped regions with its bundled Haar Cascade. It does not recognize or identify people, save recordings, or send camera frames to external services.
 
 ## Project structure
 
@@ -13,7 +13,8 @@ Team2_FaceMonitoring/
 │   ├── camera_service.py
 │   ├── event_logger.py
 │   ├── face_detector.py
-│   └── monitoring_service.py
+│   ├── monitoring_service.py
+│   └── presence_tracker.py
 ├── templates/index.html
 ├── static/css/style.css
 ├── static/js/dashboard.js
@@ -21,11 +22,12 @@ Team2_FaceMonitoring/
 └── docs/
 ```
 
-## Run in the existing Windows virtual environment
+## Install and run in Windows / VS Code
 
-In PowerShell, change to the project folder (the folder containing `app.py`) and use its existing virtual environment:
+In the VS Code terminal, change to the project folder (the folder containing `app.py`). Create a virtual environment if needed, install the listed dependencies, then run the Flask dashboard:
 
 ```powershell
+if (-not (Test-Path .venv)) { py -m venv .venv }
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 python app.py
@@ -52,8 +54,26 @@ Camera and detector configuration can be adjusted before starting:
 $env:FACE_MONITOR_CAMERA_INDEX = "1"
 $env:FACE_MONITOR_FRAME_WIDTH = "640"
 $env:FACE_MONITOR_FRAME_HEIGHT = "480"
-.\.venv\Scripts\python.exe app.py
+$env:FACE_MONITOR_ABSENCE_THRESHOLD_SECONDS = "10"
+$env:FACE_MONITOR_TARGET_FPS = "5"
+python app.py
 ```
+
+`FACE_MONITOR_ABSENCE_THRESHOLD_SECONDS` defaults to 10 seconds. `FACE_MONITOR_TARGET_FPS` defaults to 5 detection samples per second. To process a video file instead of the configured webcam, set its path before starting the app:
+
+```powershell
+$env:FACE_MONITOR_VIDEO_PATH = "C:\videos\sample.mp4"
+python app.py
+```
+
+To switch back to the webcam in the same PowerShell session, clear the video path:
+
+```powershell
+Remove-Item Env:FACE_MONITOR_VIDEO_PATH -ErrorAction SilentlyContinue
+python app.py
+```
+
+Video paths are opened by the Flask host through OpenCV; the file must be readable by that machine. The stream and dashboard stop reporting detections when the file reaches an unreadable/end frame.
 
 ## Session lifecycle and dashboard
 
@@ -61,9 +81,28 @@ Enter a 1–64 character ID containing letters, numbers, `.`, `_`, or `-` (the f
 
 Statuses: `NOT_STARTED` → `STARTING` → `RUNNING` → `STOPPING` → `STOPPED`. Webcam initialization failures produce `CAMERA_UNAVAILABLE`; a clearly identifiable Python permission exception produces `PERMISSION_DENIED`; unexpected failures produce `ERROR`. A generic OpenCV failure is not labeled a permission denial because OpenCV often cannot distinguish a denied permission from a missing or busy device. Retry a failed session with **Retry Camera**.
 
-Only one physical webcam and one active session are supported by this Flask process. A second session receives HTTP 409 while the camera is owned by another session. Stopping a session other than the current camera owner cannot stop that camera. Camera frames are processed by a background thread; an observed camera read/processing failure is logged for that session and its camera handle is released.
+Only one configured camera/video source and one active session are supported by this Flask process. A second session receives HTTP 409 while the source is owned by another session. Stopping a session other than the current owner cannot stop that source. Frames are processed by a background thread; an observed read/processing failure is logged for that session and its capture handle is released.
 
-The dashboard retains normal, grayscale, Gaussian blur, threshold, and Canny display modes, and shows the selected session's face count, processing FPS, frame-processing latency, state, error, and events. These are runtime measurements only; no detections or metrics are fabricated.
+The dashboard retains normal, grayscale, Gaussian blur, threshold, and Canny display modes, and shows the selected session's face count, presence state, absence duration, processing FPS, frame-processing latency, error, and events. The states are `FACE_PRESENT`, `FACE_ABSENT`, and `DETECTION_UNAVAILABLE`. Camera read/detection failures invalidate the absence timer rather than being counted as absence. A `prolonged_absence` event is emitted once per continuous absence after the configured threshold; the timer resets on face return or unavailable detection.
+
+## Automated and manual testing
+
+Run the automated, hardware-free suite:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+The suite covers absence shorter than threshold, threshold crossing and duplicate suppression, face-return reset, unavailable-detection timer invalidation, target-FPS scheduling, invalid frames, failed camera initialization, camera disconnection, and dashboard lifecycle/API behavior. Camera lighting and angle checks require a real webcam and are manual:
+
+1. Start monitoring with the webcam and face the camera under normal, bright, dim, and back-lit conditions.
+2. Check that `FACE_PRESENT` and the bounding box appear when the face is detected. Turn away and return before the configured threshold; verify the timer resets and no prolonged-absence event appears.
+3. Set the threshold to a short test value (for example `3` seconds), turn away longer than that, and verify exactly one `prolonged_absence` event. Continue facing away to confirm duplicates are suppressed, then return and repeat.
+4. Repeat at front-facing, left/right, and slightly elevated/low camera angles, noting misses and false detections.
+5. Set an invalid camera index or disconnect/disable the webcam and verify the session reports camera failure/`DETECTION_UNAVAILABLE`, not `FACE_ABSENT`.
+6. Set `FACE_MONITOR_VIDEO_PATH` to a readable sample video and start a session. The sample-video test does not require camera hardware; detections stop when the file ends.
+7. Change `FACE_MONITOR_TARGET_FPS` (for example `2` and `10`) and compare the reported detection sampling rate and CPU load.
+
 
 ## API
 
